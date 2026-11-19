@@ -21,6 +21,8 @@
 #                                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
+# Sanitize Alias
+
 # TO DO:
 # - Add a mode to scan a directory tree and create par2 files for everything? Not sure how that would work since sometimes it isn't a single file. (Implemented via --scan)
 
@@ -270,7 +272,7 @@ if [[ "$SCAN_MODE" == "true" ]]; then
             work_dir="$BASE_DIR/$rel_dir/$stem"
         fi
 
-        process_movie_direct "$src_path" "$file_name" "$work_dir" "$alias" "$category" "$DEF_REDUNDANCY"
+        process_movie "$src_path" "$file_name" "$work_dir" "$alias" "$category" "$DEF_REDUNDANCY"
     done < <(find "$TOPLEVEL" -type f \( -name "*.mkv" -o -name "*.mp4" -o -name "*.avi" -o -name "*.m4v" -o -name "*.ts" \) | sort)
 
 else
@@ -296,6 +298,9 @@ else
         # Apply defaults if blank
         TLD="${TLD:-$TOPLEVEL}"
         REDUNDANCY="${REDUNDANCY:-$DEF_REDUNDANCY}"
+
+        # Sanitize alias to prevent accidental directory nesting if subfolders were included in ALIAS
+        ALIAS="${ALIAS##*/}"
 
         case "${TYPE,,}" in
             movie)
