@@ -21,6 +21,8 @@
 #                                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
+# Another attempt at handling subfolders correctly
+
 # TO DO:
 # - Add a mode to scan a directory tree and create par2 files for everything? Not sure how that would work since sometimes it isn't a single file. (Implemented via --scan)
 
@@ -233,7 +235,16 @@ if [[ "$SCAN_MODE" == "true" ]]; then
         [[ -z "$series_dir" ]] && continue
         
         rel_path="${series_dir#$TOPLEVEL/}"
-        category="${rel_path%%/*}"
+        
+        # Check if there is an intermediate folder like 'TV Series' between category and series name
+        # e.g., Other/TV Series/The IT Crowd -> category='Other/TV Series'
+        if [[ "$rel_path" == */*/* ]]; then
+            parent_dir="$(dirname "$rel_path")"
+            category="$parent_dir"
+        else
+            category="${rel_path%%/*}"
+        fi
+
         target_path="$rel_path"
         alias="$(basename "$series_dir")"
 
@@ -250,20 +261,25 @@ if [[ "$SCAN_MODE" == "true" ]]; then
         fi
 
         rel_path="${vid_file#$TOPLEVEL/}"
-        category="${rel_path%%/*}"
+        
+        # Determine category dynamically, preserving nested folders (like Movie Groups)
+        file_dir="$(dirname "$vid_file")"
+        rel_dir="${file_dir#$TOPLEVEL/}"
         
         filename="$(basename "$vid_file")"
         stem="${filename%.*}"
-        file_dir="$(dirname "$vid_file")"
+																				 
         parent_dir="$(basename "$file_dir")"
-        rel_dir="${file_dir#$TOPLEVEL/}"
+
+        # Extract top-level category (e.g., Action, Comedy)
+        category="${rel_path%%/*}"
 
         src_path="$file_dir"
         file_name="$filename"
         alias="$stem"
 
-        # If the parent directory is named identically to the movie file (case-insensitive),
-        # use the parent folder directly as the work directory without duplicating the name.
+        # If parent directory matches the movie title, place work_dir one level higher
+																																														
         if [[ "${parent_dir,,}" == "${stem,,}" ]]; then
             work_dir="$BASE_DIR/$rel_dir"
         else
