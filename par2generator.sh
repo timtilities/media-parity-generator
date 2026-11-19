@@ -26,22 +26,12 @@
 #   - The Family/Cartoon directory was treated as a movie folder and it generated par2s for each video (hundreds).
 #     I redid this manually, but is there a way to detect this and handle it? maybe the Cartoon directory needs to be
 #     fixed, not the script?
-# - Add an option to force a specific scan type (tv/movies/files). The files scan fails on my Photos directory because
-#     some of the files are movies (mp4), which trick it into thinking it's a MOVIE directory
-#     - Maybe use -st (tv), -sm (movies) and -sf (files)?
-
-# Parity Generator for Movies & TV Series
-# ... Add a description
-#
-#
-# ... Add a sample media_list.txt file
-#
 
 
-# MANUALLY CREATE PARITY FILES
+# MANUALLY CREATE PAR2 FILES
 # par2 create -r"$REDUNDANCY" -t8 -m4096 -b"$BLOCK_COUNT" -R -B "$SRC_PATH" "$DEST_PATH/PARFILE_NAME.par2" "$SRC_PATH/$FILES"*
 #
-# TO VERIFY PAR2 FILES:
+# MANUALLY VERIFY PAR2 FILES:
 # source Path/To/config.env
 # par2 verify -T2 -m4096 -B "$MOVIE_DIR" -- "$PAR2_DIR/$MOVIE_ALIAS.par2"
 
@@ -54,34 +44,20 @@ MEDIA_LIST="/opt/misc/par2_scripts/media_list.txt"
 DEST_DIR="/mnt/Videos"
 # Top level directory default (used if TLD from MEDIA_LIST is blank or in scan mode)
 TOPLEVEL="/data/Videos"
-# Force recreation of config.env directories
+# Force recreation of config.env files
 CFG_FORCE=false
 # Default redundancy - used if not specified in the list or during scan
 DEF_REDUNDANCY="1"
 # Recovery block count
 BLOCK_COUNT="4000"
-# Automatic directory scan mode
-SCAN_MODE=false
 # Do not wait for confirmation
 ASSUME_YES=false
+# Automatic directory scan mode
+SCAN_MODE=false
+# Force the scan into a specific mode (movie/tv/files). Only affects automatic directory scan.
+DETECT_MODE=""
 
 ######################## CHANGE NOTHING BELOW THIS LINE ########################
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 # ANSI Color Codes
 C_RESET='\033[0m'
@@ -108,9 +84,12 @@ usage() {
     echo "  -t, --toplevel DIR          Default top-level source directory (default: /scratch/Par2_Files/TestVids)"
     echo "  -r, --redundancy PERCENT    Default redundancy percentage (default: 1)"
     echo "  -b, --recovery-blocks COUNT Number of recovery blocks (default: 4000)"
-    echo "  -s, --scan                  Automatically scan the top-level directory tree instead of using a media list"
     echo "  -f, --force                 Force recreation of config and target directories (default: false)"
     echo "  -y, --yes                   Assume YES (do not ask for confirmation)"
+    echo "  -s, --scan                  Scan the top-level directory tree (instead of using a media list) and determine media type automatically"
+    echo "  -st, --scantv               Scan the top-level directory and treat as TV Series"
+    echo "  -sm, --scanmovie            Scan the top-level directory and treat as movies"
+    echo "  -sf, --scanfiles            Scan the top-level directory and treat as file/folder collections (Photos, MP3s, etc)"
     echo "  -h, --help                  Display this help message and exit"
     exit 0
 }
@@ -161,6 +140,8 @@ summary_confirm() {
     echo -e " Force Recreation    : ${C_BOLD}$CFG_FORCE${C_RESET}"
     echo -e " Skip Confirmation   : ${C_BOLD}$ASSUME_YES${C_RESET}"
     [[ "$SCAN_MODE" == "false" ]] && echo -e " Media List File     : ${C_BOLD}$MEDIA_LIST${C_RESET}"
+    [[ "$SCAN_MODE" == "true" ]] && [[ "$DETECT_MODE" == "" ]] && echo -e " Scan Mode           : ${C_BOLD}Automatic${C_RESET}"
+    [[ "$SCAN_MODE" == "true" ]] && [[ "$DETECT_MODE" != "" ]] && echo -e " Scan Mode           : ${C_BOLD}$DETECT_MODE${C_RESET}"
     echo -e " Log File            : ${C_BOLD}$LOGFILE${C_RESET}"
     echo -e "${C_CYAN}====================================================================${C_RESET}"
 }
@@ -350,7 +331,7 @@ while [[ "$#" -gt 0 ]]; do
             shift
             ;;
         -t|--toplevel) 
-            TOPLEVEL="$2"
+            TOPLEVEL="${2%/}"
             shift 
             ;;
         -r|--redundancy) 
@@ -361,16 +342,27 @@ while [[ "$#" -gt 0 ]]; do
             BLOCK_COUNT="$2"
             shift 
             ;;
-
-        -s|--scan)
-            SCAN_MODE=true
-            ;;
         -f|--force) 
             CFG_FORCE=true 
             ;;
         -y|--yes)
             ASSUME_YES=true
             ;;
+        -s|--scan)
+            SCAN_MODE=true
+            ;;
+        -st|--scantv)
+            SCAN_MODE=true
+            DETECT_MODE="tv"
+            ;;
+        -sm|--scanmovies)
+            SCAN_MODE=true
+            DETECT_MODE="movie"
+            ;;
+        -sf|--scanfiles)
+            SCAN_MODE=true
+            DETECT_MODE="files"
+            ;;            
         -h|--help) 
             usage 
             ;;
@@ -430,97 +422,98 @@ if [[ "$SCAN_MODE" == "true" ]]; then
     echo -e "${C_YELLOW}Scanning '$TOPLEVEL' for media...${C_RESET}"
 
     # Detect TV Series (directories containing Season* or Extra* subdirectories)
-    while IFS= read -r series_dir; do
-        [[ -z "$series_dir" ]] && continue
-        
-        rel_path="${series_dir#$TOPLEVEL/}"
-        
-        # Preserve intermediate folder if present (e.g. Other/TV Series/The IT Crowd -> category='Other/TV Series')
-        if [[ "$rel_path" == */*/* ]]; then
-            parent_dir="$(dirname "$rel_path")"
-            category="$parent_dir"
-        else
-            category="${rel_path%%/*}"
-        fi
+    if [[ -z "$DETECT_MODE" || "$DETECT_MODE" == "tv" ]]; then
+        while IFS= read -r series_dir; do
+            [[ -z "$series_dir" ]] && continue
+            
+            rel_path="${series_dir#$TOPLEVEL/}"
+            
+            # Preserve intermediate folder if present (e.g. Other/TV Series/The IT Crowd -> category='Other/TV Series')
+            if [[ "$rel_path" == */*/* ]]; then
+                parent_dir="$(dirname "$rel_path")"
+                category="$parent_dir"
+            else
+                category="${rel_path%%/*}"
+            fi
 
-        target_path="$rel_path"
-        alias="$(basename "$series_dir")"
+            target_path="$rel_path"
+            alias="$(basename "$series_dir")"
 
-        process_tv "$target_path" "$TOPLEVEL" "$alias" "$category" "$DEF_REDUNDANCY"
-    done < <(find "$TOPLEVEL" -type d \( -iname "Season*" -o -iname "Extra*" \) -exec dirname {} \; | sort -u)
+            process_tv "$target_path" "$TOPLEVEL" "$alias" "$category" "$DEF_REDUNDANCY"
+        done < <(find "$TOPLEVEL" -type d \( -iname "Season*" -o -iname "Extra*" \) -exec dirname {} \; | sort -u)
+    fi
 
     # Detect Movies (video files not located inside any Season/Extra directory)
-    while IFS= read -r vid_file; do
-        [[ -z "$vid_file" ]] && continue
+    if [[ -z "$DETECT_MODE" || "$DETECT_MODE" == "movie" ]]; then
+        while IFS= read -r vid_file; do
+            [[ -z "$vid_file" ]] && continue
 
-        rel_path="${vid_file#$TOPLEVEL/}"
+            rel_path="${vid_file#$TOPLEVEL/}"
 
-        # Skip if any path component is a Season or Extra folder (robust check for TV show episodes)
-        skip_file=false
-        IFS='/' read -ra path_parts <<< "$rel_path"
-        for part in "${path_parts[@]}"; do
-            if [[ "$part" =~ ^[Ss]eason ]] || [[ "$part" =~ ^[Ee]xtra ]]; then
-                skip_file=true
-                break
+            # Skip if any path component is a Season or Extra folder (robust check for TV show episodes)
+            skip_file=false
+            IFS='/' read -ra path_parts <<< "$rel_path"
+            for part in "${path_parts[@]}"; do
+                if [[ "$part" =~ ^[Ss]eason ]] || [[ "$part" =~ ^[Ee]xtra ]]; then
+                    skip_file=true
+                    break
+                fi
+            done
+            [[ "$skip_file" == "true" ]] && continue
+
+            file_dir="$(dirname "$vid_file")"
+            rel_dir="${file_dir#$TOPLEVEL/}"
+            
+            filename="$(basename "$vid_file")"
+            stem="${filename%.*}"
+            parent_dir="$(basename "$file_dir")"
+
+            category="${rel_path%%/*}"
+
+            src_path="$file_dir"
+            file_name="$filename"
+            alias="$stem"
+
+            # If parent directory matches the movie title, place work_dir one level higher
+            if [[ "${parent_dir,,}" == "${stem,,}" ]]; then
+                work_dir="$DEST_DIR/$rel_dir"
+            else
+                work_dir="$DEST_DIR/$rel_dir/$stem"
             fi
-        done
-        [[ "$skip_file" == "true" ]] && continue
 
-        file_dir="$(dirname "$vid_file")"
-        rel_dir="${file_dir#$TOPLEVEL/}"
-        
-        filename="$(basename "$vid_file")"
-        stem="${filename%.*}"
-        parent_dir="$(basename "$file_dir")"
+            process_movie "$src_path" "$stem" "$work_dir" "$alias" "$category" "$DEF_REDUNDANCY"
+        done < <(find "$TOPLEVEL" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" -o -iname "*.ts" \) | sort)
+    fi
 
-        category="${rel_path%%/*}"
-
-        src_path="$file_dir"
-        file_name="$filename"
-        alias="$stem"
-
-        # If parent directory matches the movie title, place work_dir one level higher
-        if [[ "${parent_dir,,}" == "${stem,,}" ]]; then
-            work_dir="$DEST_DIR/$rel_dir"
-        else
-            work_dir="$DEST_DIR/$rel_dir/$stem"
-        fi
-
-        #process_movie "$src_path" "$file_name" "$work_dir" "$alias" "$category" "$DEF_REDUNDANCY"
-        process_movie "$src_path" "$stem" "$work_dir" "$alias" "$category" "$DEF_REDUNDANCY"
-    done < <(find "$TOPLEVEL" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" -o -iname "*.ts" \) | sort)
-
-
-    # Detect Folder Collections (e.g. music band folders under genre directories like /data/MP3s/80s/ACDC)
+    # Detect Folder Collections (music/band folders under genre directories like /data/MP3s/80s/ACDC)
     # Scans depth 2 folders under TOPLEVEL that contain files and do NOT contain Season/Extra subfolders
-    while IFS= read -r folder_dir; do
-        [[ -z "$folder_dir" ]] && continue
+    if [[ -z "$DETECT_MODE" || "$DETECT_MODE" == "files" ]]; then
+        while IFS= read -r folder_dir; do
+            [[ -z "$folder_dir" ]] && continue
 
-        # Skip if it's a TV series folder
-        if find "$folder_dir" -maxdepth 1 -type d \( -iname "Season*" -o -iname "Extra*" \) | grep -q .; then
-            continue
-        fi
+            if [[ -z "$DETECT_MODE" ]]; then
+                # Skip if it's a TV series folder
+                if find "$folder_dir" -maxdepth 1 -type d \( -iname "Season*" -o -iname "Extra*" \) | grep -q .; then
+                    continue
+                fi
+                # Skip if it contains movie files directly inside it (handled by movie scan)
+                if find "$folder_dir" -maxdepth 1 -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" -o -iname "*.ts" \) | grep -q .; then
+                    continue
+                fi
+            fi
 
-        # Skip if it contains movie video files directly inside it (handled by movie scan)
-        if find "$folder_dir" -maxdepth 1 -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" -o -iname "*.ts" \) | grep -q .; then
-            continue
-        fi
+            rel_path="${folder_dir#$TOPLEVEL/}"
+            [[ -z "$rel_path" || "$rel_path" == "$TOPLEVEL" ]] && continue
 
-        rel_path="${folder_dir#$TOPLEVEL/}"
-        [[ -z "$rel_path" || "$rel_path" == "$TOPLEVEL" ]] && continue
+            if [[ "$rel_path" == */* ]]; then
+                category="$(dirname "$rel_path")"
+            else
+                category="Collections"
+            fi
 
-        if [[ "$rel_path" == */* ]]; then
-            category="$(dirname "$rel_path")"
-        else
-            category="Collections"
-        fi
-
-        # target_path="$rel_path"
-        # alias="$(basename "$folder_dir")"
-
-        process_files "$rel_path" "$TOPLEVEL" "$(basename "$folder_dir")" "$category" "$DEF_REDUNDANCY"
-    done < <(find "$TOPLEVEL" -mindepth 2 -maxdepth 2 -type d | sort)
-
+            process_files "$rel_path" "$TOPLEVEL" "$(basename "$folder_dir")" "$category" "$DEF_REDUNDANCY"
+        done < <(find "$TOPLEVEL" -mindepth 2 -maxdepth 2 -type d | sort)
+    fi
 
 else
     # Loop through each entry listed in $MEDIA_LIST
@@ -563,7 +556,6 @@ else
                     SUB_DIR=""
                     FILE_NAME="$TARGET"
                 fi
-
                 if [ -n "$SUB_DIR" ]; then          
                     WORK_DIR="$DEST_DIR/$CATEGORY/$SUB_DIR/$ALIAS"
                     SRC_PATH="$TLD/$CATEGORY/$SUB_DIR"
