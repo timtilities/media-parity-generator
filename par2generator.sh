@@ -26,10 +26,11 @@
 #   - The Family/Cartoon directory was treated as a movie folder and it generated par2s for each video (hundreds).
 #     I redid this manually, but is there a way to detect this and handle it? maybe the Cartoon directory needs to be
 #     fixed, not the script?
+# - Move '# Get proper block count' to a helper function
 
 
 # MANUALLY CREATE PAR2 FILES
-# par2 create -r"$REDUNDANCY" -t8 -m4096 -b"$BLOCK_COUNT" -R -B "$SRC_PATH" "$DEST_PATH/PARFILE_NAME.par2" "$SRC_PATH/$FILES"*
+# par2 create -r"$REDUNDANCY" -t8 -m4096 -b"$DEF_BLOCK_COUNT" -R -B "$SRC_PATH" "$DEST_PATH/PARFILE_NAME.par2" "$SRC_PATH/$FILES"*
 #
 # MANUALLY VERIFY PAR2 FILES:
 # source Path/To/config.env
@@ -49,7 +50,7 @@ CFG_FORCE=false
 # Default redundancy - used if not specified in the list or during scan
 DEF_REDUNDANCY="1"
 # Recovery block count
-BLOCK_COUNT="4000"
+DEF_BLOCK_COUNT="4000"
 # Do not wait for confirmation
 ASSUME_YES=false
 # Automatic directory scan mode
@@ -136,7 +137,7 @@ summary_confirm() {
     echo -e " Destination Dir     : ${C_BOLD}$DEST_DIR${C_RESET}"
     echo -e " Top-Level Directory : ${C_BOLD}$TOPLEVEL${C_RESET}"
     echo -e " Default Redundancy  : ${C_BOLD}${DEF_REDUNDANCY}%${C_RESET}"
-    echo -e " Recovery blocks     : ${C_BOLD}${BLOCK_COUNT}${C_RESET}"
+    echo -e " Recovery blocks     : ${C_BOLD}${DEF_BLOCK_COUNT}${C_RESET}"
     echo -e " Force Recreation    : ${C_BOLD}$CFG_FORCE${C_RESET}"
     echo -e " Skip Confirmation   : ${C_BOLD}$ASSUME_YES${C_RESET}"
     [[ "$SCAN_MODE" == "false" ]] && echo -e " Media List File     : ${C_BOLD}$MEDIA_LIST${C_RESET}"
@@ -178,11 +179,19 @@ process_movie() {
         echo -e "${C_BOLD}"
         du -sh "$SRC_PATH/$FILE_NAME"* 2>/dev/null || true
 
+        # The total recovery blocks must be > than the total number of files, and > 2000
+        local FILECNT=$(find "$SRC_PATH/$FILE_NAME"* -type f | wc -l)
+        local BLOCKCNT=$(( FILECNT < DEF_BLOCK_COUNT ? DEF_BLOCK_COUNT : FILECNT ))
+        if (( BLOCKCNT > 32768 )); then
+            echo -e "${C_YELLOW}Warning: File count ($FILECNT) exceeds PAR2 limit of 32,768. Clamping block count.${C_RESET}"
+            BLOCKCNT=32768
+        fi
+
         # Create config files for future verification ease
         ENVFILE="$WORK_DIR/config.env"
         create_config "$ALIAS" "$SRC_PATH" "$FILE_NAME" "$WORK_DIR"
 
-        par2 create -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCK_COUNT}" -B "$SRC_PATH" "$WORK_DIR/$ALIAS" "$SRC_PATH/$FILE_NAME"*
+        par2 create -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCKCNT}" -B "$SRC_PATH" "$WORK_DIR/$ALIAS" "$SRC_PATH/$FILE_NAME"*
     else
         echo -e "${C_YELLOW}[-] Target directory already exists. Skipping: $WORK_DIR${C_RESET}"
     fi
@@ -235,12 +244,20 @@ process_tv() {
         if [[ ! -d "$SEASON_WORK_DIR" || "$CFG_FORCE" == "true" ]]; then             
             [ ! -d "$SEASON_WORK_DIR" ] && mkdir -p "$SEASON_WORK_DIR"
 
+            # The total recovery blocks must be > than the total number of files, and > 2000
+            local FILECNT=$(find "$SEASON"/* -type f | wc -l)
+            local BLOCKCNT=$(( FILECNT < DEF_BLOCK_COUNT ? DEF_BLOCK_COUNT : FILECNT ))
+            if (( BLOCKCNT > 32768 )); then
+                echo -e "${C_YELLOW}Warning: File count ($FILECNT) exceeds PAR2 limit of 32,768. Clamping block count.${C_RESET}"
+                BLOCKCNT=32768
+            fi
+
             # Create config files for future verification ease
             ENVFILE="$SEASON_WORK_DIR/config.env"
             create_config "$ALIAS.$PARSEASON" "$SEASON" "$SEASON" "$SEASON_WORK_DIR"
 
             # Create par2 files for the individual season
-            par2 create -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCK_COUNT}" -B "$SEASON" "$SEASON_WORK_DIR/$ALIAS.$PARSEASON" "$SEASON"/*
+            par2 create -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCKCNT}" -B "$SEASON" "$SEASON_WORK_DIR/$ALIAS.$PARSEASON" "$SEASON"/*
         else
             echo -e "${C_YELLOW}[-] Target directory already exists. Skipping: $SEASON_WORK_DIR${C_RESET}"
         fi
@@ -301,12 +318,20 @@ process_files() {
     if [[ ! -d "$WORK_DIR" || -z "$(ls -A "$WORK_DIR"/*.par2 2>/dev/null)" || "$CFG_FORCE" == "true" ]]; then
         [ ! -d "$WORK_DIR" ] && mkdir -p "$WORK_DIR"
 
+        # The total recovery blocks must be > than the total number of files, and > 2000
+        local FILECNT=$(find "$SRC_DIR"/* -type f | wc -l)
+        local BLOCKCNT=$(( FILECNT < DEF_BLOCK_COUNT ? DEF_BLOCK_COUNT : FILECNT ))
+        if (( BLOCKCNT > 32768 )); then
+            echo -e "${C_YELLOW}Warning: File count ($FILECNT) exceeds PAR2 limit of 32,768. Clamping block count.${C_RESET}"
+            BLOCKCNT=32768
+        fi
+
         # Create config files for future verification ease
         ENVFILE="$WORK_DIR/config.env"
         create_config "$ALIAS" "$SRC_DIR" "$SRC_DIR" "$WORK_DIR"
 
         # Create par2 files recursively (-R) to cover subfolders (like albums/Flashback) inside the band folder
-        par2 create -R -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCK_COUNT}" -B "$SRC_DIR" "$WORK_DIR/$ALIAS" "$SRC_DIR"/*
+        par2 create -R -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCKCNT}" -B "$SRC_DIR" "$WORK_DIR/$ALIAS" "$SRC_DIR"/*
     else
         echo -e "${C_YELLOW}[-] Target directory already exists or has PAR2 files. Skipping: $WORK_DIR${C_RESET}"
     fi
@@ -339,7 +364,7 @@ while [[ "$#" -gt 0 ]]; do
             shift 
             ;;
         -b|--recovery-blocks) 
-            BLOCK_COUNT="$2"
+            DEF_BLOCK_COUNT="$2"
             shift 
             ;;
         -f|--force) 
@@ -393,6 +418,9 @@ if [[ "$SCAN_MODE" == "false" && ! -f "$MEDIA_LIST" ]]; then
     echo -e "${C_RED}Data file '$MEDIA_LIST' not found! Exiting!${C_RESET}" >&2
     exit 1
 fi
+
+# Verify block count is at least 2000
+DEF_BLOCK_COUNT=$(( DEF_BLOCK_COUNT < 2000 ? 2000 : DEF_BLOCK_COUNT ))
 
 # Print a configuration summary
 summary_confirm
