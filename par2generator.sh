@@ -21,15 +21,67 @@
 #                                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-# TO DO:
-# - The scan mode names the folders after the file (up to the extension). The media_file mode names them based on the alias. 
-#     Do I want them to always match, or should I allow the alias? Should I have it default to the filename if the alias isn't provided?
+# TODO:
+# - Add an exclude option when scanning - either just exclude first-level dirs, or use the find -X option and syntax
+#   - The Family/Cartoon directory was treated as a movie folder and it generated par2s for each video (hundreds).
+#     I redid this manually, but is there a way to detect this and handle it? maybe the Cartoon directory needs to be
+#     fixed, not the script?
+# - Add an option to force a specific scan type (tv/movies/files). The files scan fails on my Photos directory because
+#     some of the files are movies (mp4), which trick it into thinking it's a MOVIE directory
+#     - Maybe use -st (tv), -sm (movies) and -sf (files)?
 
+# Parity Generator for Movies & TV Series
+# ... Add a description
+#
+#
+# ... Add a sample media_list.txt file
+#
+
+
+# MANUALLY CREATE PARITY FILES
+# par2 create -r"$REDUNDANCY" -t8 -m4096 -b"$BLOCK_COUNT" -R -B "$SRC_PATH" "$DEST_PATH/PARFILE_NAME.par2" "$SRC_PATH/$FILES"*
+#
 # TO VERIFY PAR2 FILES:
 # source Path/To/config.env
 # par2 verify -T2 -m4096 -B "$MOVIE_DIR" -- "$PAR2_DIR/$MOVIE_ALIAS.par2"
 
 ############################################################################################################
+
+# Default configuration variables:
+# File containing the media list
+MEDIA_LIST="/opt/misc/par2_scripts/media_list.txt"
+# Destination directory where the par2 sets will be built
+DEST_DIR="/mnt/Videos"
+# Top level directory default (used if TLD from MEDIA_LIST is blank or in scan mode)
+TOPLEVEL="/data/Videos"
+# Force recreation of config.env directories
+CFG_FORCE=false
+# Default redundancy - used if not specified in the list or during scan
+DEF_REDUNDANCY="1"
+# Recovery block count
+BLOCK_COUNT="4000"
+# Automatic directory scan mode
+SCAN_MODE=false
+# Do not wait for confirmation
+ASSUME_YES=false
+
+######################## CHANGE NOTHING BELOW THIS LINE ########################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # ANSI Color Codes
 C_RESET='\033[0m'
@@ -41,120 +93,82 @@ C_BLUE='\033[0;34m'
 C_MAGENTA='\033[0;35m'
 C_RED='\033[0;31m'
 
-# Default configuration variables:
-# File containing the media list
-MEDIA_LIST="media_list.txt"
-# Destination directory where the par2 sets will be built
-DEST_DIR="/scratch/Par2_Files/TestPars"
-# Top level directory default (used if TLD from MEDIA_LIST is blank or in scan mode)
-TOPLEVEL="/scratch/Par2_Files/TestVids"
-# Force recreation of config.env directories
-CFG_FORCE=false
-# Default redundancy - used if not specified in the list or during scan
-DEF_REDUNDANCY="1"
-# Automatic directory scan mode
-SCAN_MODE=false
+# Remove trailing / (just in case)
+TOPLEVEL="${TOPLEVEL%/}"
+DEST_DIR="${DEST_DIR%/}"
 
+##################################################################
 # Display usage instructions
+##################################################################
 usage() {
     echo -e "${C_BOLD}Usage:${C_RESET} $0 [options]"
     echo -e "${C_BOLD}Options:${C_RESET}"
-    echo "  -m, --media-list FILE     Path to the media list file (default: media_list.txt)"
-    echo "  -d, --dest-dir DIR        Destination output directory for PAR2 sets (default: /scratch/Par2_Files/Videos)"
-    echo "  -t, --toplevel DIR        Default top-level source directory (default: /data/Videos)"
-    echo "  -r, --redundancy PERCENT  Default redundancy percentage (default: 7)"
-    echo "  -s, --scan                Automatically scan the top-level directory tree instead of using a media list"
-    echo "  -f, --force               Force recreation of config and target directories (default: false)"
-    echo "  -h, --help                Display this help message and exit"
+    echo "  -m, --media-list FILE       Path to the media list file (default: media_list.txt)"
+    echo "  -d, --dest-dir DIR          Destination output directory for PAR2 sets (default: /scratch/Par2_Files/TestPars)"
+    echo "  -t, --toplevel DIR          Default top-level source directory (default: /scratch/Par2_Files/TestVids)"
+    echo "  -r, --redundancy PERCENT    Default redundancy percentage (default: 1)"
+    echo "  -b, --recovery-blocks COUNT Number of recovery blocks (default: 4000)"
+    echo "  -s, --scan                  Automatically scan the top-level directory tree instead of using a media list"
+    echo "  -f, --force                 Force recreation of config and target directories (default: false)"
+    echo "  -y, --yes                   Assume YES (do not ask for confirmation)"
+    echo "  -h, --help                  Display this help message and exit"
     exit 0
 }
+##################################################################
 
-# Parse command-line options
-while [[ "$#" -gt 0 ]]; do
-    case "$1" in
-        -m|--media-list) 
-            MEDIA_LIST="$2"
-            shift 
-            ;;
-        -d|--dest-dir|-b|--base-dir) 
-            DEST_DIR="$2"
-            shift 
-            ;;
-        -t|--toplevel) 
-            TOPLEVEL="$2"
-            shift 
-            ;;
-        -r|--redundancy) 
-            DEF_REDUNDANCY="$2"
-            shift 
-            ;;
-        -s|--scan)
-            SCAN_MODE=true
-            ;;
-        -f|--force) 
-            CFG_FORCE=true 
-            ;;
-        -h|--help) 
-            usage 
-            ;;
-        *)
-            echo -e "${C_RED}Unknown option: $1${C_RESET}" >&2
-            echo "Use '$0 --help' for usage information." >&2
-            exit 1
-            ;;
-    esac
-    shift
-done
+##################################################################
+# Function to create the config.env files
+# Required Parameters:
+# MOVIE_ALIAS:      Name of folder to place video(s) in
+# MOVIE_DIR:        Folder containing the original videos
+# MOVIE_FILENAME:   Base-name of the par2 files
+# PAR2_DIR:         Path to folder containing the par2 files
+##################################################################
+create_config() {
+    local cAlias=$1
+    local cMovieDir=$2
+    local cMovieFileName=$3
+    local cPar2Dir=$4
 
-# Log file
-LOGFILE="$DEST_DIR/par2generator.log"
+    echo -e "${C_YELLOW}Creating env file: ${C_BOLD}$ENVFILE${C_RESET}"
+    echo "# PAR2 Verification Configuration for '$ALIAS'" > "$ENVFILE"
+    echo "# Generated on: $(date)" >> "$ENVFILE"
+    echo "#" >> "$ENVFILE"
+    echo "# TO VERIFY SOURCE FILES:" >> "$ENVFILE"
+    echo "# source Path/To/This/config.env" >> "$ENVFILE"
+    echo "# par2 verify -T2 -m4096 -B \"\$MOVIE_DIR\" -- \"\$PAR2_DIR/\$MOVIE_ALIAS.par2\"" >> "$ENVFILE"
+    echo "" >> "$ENVFILE"
+    echo "MOVIE_DIR=\"$cMovieDir\"" >> "$ENVFILE"
+    echo "MOVIE_FILENAME=\"$cMovieFileName\"" >> "$ENVFILE"
+    echo "MOVIE_ALIAS=\"$cAlias\"" >> "$ENVFILE"
+    echo "REDUNDANCY=\"$REDUNDANCY\"" >> "$ENVFILE"
+    echo "PAR2_DIR=\"$cPar2Dir\"" >> "$ENVFILE"
+}
+##################################################################
 
-if [ ! -d "$DEST_DIR" ]; then
-    echo -e "${C_RED}Destination directory '$DEST_DIR' does not exist! Exiting!${C_RESET}" >&2
-    exit 1
-fi
+##################################################################
+# Function to display config summary and get confirmation
+##################################################################
+summary_confirm() {
+    echo -e "${C_CYAN}====================================================================${C_RESET}"
+    echo -e "${C_BOLD}${C_GREEN} PAR2 Batch Generator Configuration Summary${C_RESET}"
+    echo -e "${C_CYAN}====================================================================${C_RESET}"
+    echo -e " Execution Mode      : $( [[ "$SCAN_MODE" == "true" ]] && echo -e "${C_YELLOW}Automatic Directory Scan (--scan)${C_RESET}" || echo -e "${C_YELLOW}Media List File ($MEDIA_LIST)${C_RESET}" )"
+    echo -e " Destination Dir     : ${C_BOLD}$DEST_DIR${C_RESET}"
+    echo -e " Top-Level Directory : ${C_BOLD}$TOPLEVEL${C_RESET}"
+    echo -e " Default Redundancy  : ${C_BOLD}${DEF_REDUNDANCY}%${C_RESET}"
+    echo -e " Recovery blocks     : ${C_BOLD}${BLOCK_COUNT}${C_RESET}"
+    echo -e " Force Recreation    : ${C_BOLD}$CFG_FORCE${C_RESET}"
+    echo -e " Skip Confirmation   : ${C_BOLD}$ASSUME_YES${C_RESET}"
+    [[ "$SCAN_MODE" == "false" ]] && echo -e " Media List File     : ${C_BOLD}$MEDIA_LIST${C_RESET}"
+    echo -e " Log File            : ${C_BOLD}$LOGFILE${C_RESET}"
+    echo -e "${C_CYAN}====================================================================${C_RESET}"
+}
+##################################################################
 
-if [[ "$SCAN_MODE" == "true" && ! -d "$TOPLEVEL" ]]; then
-    echo -e "${C_RED}Top-level directory '$TOPLEVEL' does not exist! Exiting!${C_RESET}" >&2
-    exit 1
-fi
-
-if [[ "$SCAN_MODE" == "false" && ! -f "$MEDIA_LIST" ]]; then
-    echo -e "${C_RED}Data file '$MEDIA_LIST' not found! Exiting!${C_RESET}" >&2
-    exit 1
-fi
-
-# --- CONFIGURATION SUMMARY & CONFIRMATION PROMPT ---
-echo -e "${C_CYAN}====================================================================${C_RESET}"
-echo -e "${C_BOLD}${C_GREEN} PAR2 Batch Generator Configuration Summary${C_RESET}"
-echo -e "${C_CYAN}====================================================================${C_RESET}"
-echo -e " Execution Mode      : $( [[ "$SCAN_MODE" == "true" ]] && echo -e "${C_YELLOW}Automatic Directory Scan (--scan)${C_RESET}" || echo -e "${C_YELLOW}Media List File ($MEDIA_LIST)${C_RESET}" )"
-echo -e " Destination Dir     : ${C_BOLD}$DEST_DIR${C_RESET}"
-echo -e " Top-Level Directory : ${C_BOLD}$TOPLEVEL${C_RESET}"
-echo -e " Default Redundancy  : ${C_BOLD}${DEF_REDUNDANCY}%${C_RESET}"
-echo -e " Force Recreation    : ${C_BOLD}$CFG_FORCE${C_RESET}"
-[[ "$SCAN_MODE" == "false" ]] && echo -e " Media List File     : ${C_BOLD}$MEDIA_LIST${C_RESET}"
-echo -e " Log File            : ${C_BOLD}$LOGFILE${C_RESET}"
-echo -e "${C_CYAN}====================================================================${C_RESET}"
-
-read -p "Do you want to proceed with these settings? [y/N] " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo -e "${C_YELLOW}Aborted by user.${C_RESET}"
-    exit 0
-fi
-echo ""
-
-# Redirect all stdout and stderr to both the terminal and the master log file
-exec > >(tee -a "$LOGFILE") 2>&1
-
-echo -e "${C_BLUE}====================================================================${C_RESET}"
-echo -e "${C_BOLD}Starting PAR2 Generation: $(date)${C_RESET}"
-echo -e "Log file: $LOGFILE"
-echo -e "${C_BLUE}====================================================================${C_RESET}"
-echo ""
-
-# Unified function to process and create PAR2 for a movie
+##################################################################
+# Function to process a movie
+##################################################################
 process_movie() {
     local SRC_PATH="$1"
     local FILE_NAME="$2"
@@ -163,12 +177,13 @@ process_movie() {
     local CATEGORY="$5"
     local REDUNDANCY="$6"
 
-    echo -e "${C_CYAN}=========================================================================================="
+    echo -e "${C_CYAN}==========================================================================================${C_RESET}"
     echo -e "Processing Movie: ${C_BOLD}${C_GREEN}$ALIAS${C_RESET}"
     echo -e "${C_CYAN}------------------------------------------------------------------------------------------${C_RESET}"
     echo -e " Redundancy : ${C_YELLOW}${REDUNDANCY}%${C_RESET}"
     echo -e " Source     : $SRC_PATH"
     echo -e " Work Dir   : $WORK_DIR"
+    echo -e " File Name  : $FILE_NAME"
     echo -e "${C_CYAN}==========================================================================================${C_RESET}"
 
     if [ ! -d "$SRC_PATH" ]; then
@@ -182,26 +197,22 @@ process_movie() {
         echo -e "${C_BOLD}"
         du -sh "$SRC_PATH/$FILE_NAME"* 2>/dev/null || true
 
+        # Create config files for future verification ease
         ENVFILE="$WORK_DIR/config.env"
-        echo -e "${C_YELLOW}Creating env file: ${C_BOLD}$ENVFILE${C_RESET}"
-        echo "# PAR2 Verification Configuration for $ALIAS" > "$ENVFILE"
-        echo "# Generated on: $(date)" >> "$ENVFILE"
-        echo "MOVIE_DIR=\"$SRC_PATH\"" >> "$ENVFILE"
-        echo "MOVIE_FILENAME=\"$FILE_NAME\"" >> "$ENVFILE"
-        echo "MOVIE_ALIAS=\"$ALIAS\"" >> "$ENVFILE"
-        echo "REDUNDANCY=\"$REDUNDANCY\"" >> "$ENVFILE"
-        echo "PAR2_DIR=\"$WORK_DIR\"" >> "$ENVFILE"
+        create_config "$ALIAS" "$SRC_PATH" "$FILE_NAME" "$WORK_DIR"
 
-        par2 create -r"$REDUNDANCY" -t8 -m4096 -b4000 -B "$SRC_PATH" "$WORK_DIR/$ALIAS" "$SRC_PATH/$FILE_NAME"*
-        #echo -e "${C_GREEN}par2 create -r\"$REDUNDANCY\" -t8 -m4096 -b4000 -B \"$SRC_PATH\" \"$WORK_DIR/$ALIAS\" \"$SRC_PATH/$FILE_NAME\"*${C_RESET}"
+        par2 create -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCK_COUNT}" -B "$SRC_PATH" "$WORK_DIR/$ALIAS" "$SRC_PATH/$FILE_NAME"*
     else
         echo -e "${C_YELLOW}[-] Target directory already exists. Skipping: $WORK_DIR${C_RESET}"
     fi
-    echo -e "${C_CYAN}=========================================================================================="
+    echo -e "${C_CYAN}==========================================================================================${C_RESET}"
     echo; echo
 }
+##################################################################
 
+##################################################################
 # Function to process a TV Series
+##################################################################
 process_tv() {
     local TARGET="$1"
     local TLD="$2"
@@ -213,12 +224,12 @@ process_tv() {
     SERIES_DIR_NAME=$(basename "$TARGET")
     WORK_DIR="$DEST_DIR/$CATEGORY/$SERIES_DIR_NAME"
 
-    echo -e "${C_MAGENTA}=========================================================================================="
+    echo -e "${C_MAGENTA}==========================================================================================${C_RESET}"
     echo -e "Processing TV Series: ${C_BOLD}${C_GREEN}$ALIAS${C_RESET} (${C_YELLOW}Redundancy: ${REDUNDANCY}%${C_RESET}${C_MAGENTA})"
     echo -e "${C_MAGENTA}------------------------------------------------------------------------------------------${C_RESET}"
     echo -e " Source   : $SRC_DIR"
     echo -e " Work Dir : $WORK_DIR"
-    echo -e "${C_MAGENTA}=========================================================================================="
+    echo -e "${C_MAGENTA}==========================================================================================${C_RESET}"
 
     if [ ! -d "$SRC_DIR" ]; then
         echo -e "${C_RED}[-] Source directory not found: $SRC_DIR. Skipping.${C_RESET}"
@@ -243,32 +254,178 @@ process_tv() {
         if [[ ! -d "$SEASON_WORK_DIR" || "$CFG_FORCE" == "true" ]]; then             
             [ ! -d "$SEASON_WORK_DIR" ] && mkdir -p "$SEASON_WORK_DIR"
 
+            # Create config files for future verification ease
             ENVFILE="$SEASON_WORK_DIR/config.env"
-            echo -e "${C_YELLOW}Creating env file: ${C_BOLD}$ENVFILE${C_RESET}"
-            echo "# PAR2 Verification Configuration for $ALIAS" > "$ENVFILE"
-            echo "# Generated on: $(date)" >> "$ENVFILE"
-            echo "MOVIE_DIR=\"$SEASON\"" >> "$ENVFILE"
-            echo "MOVIE_FILENAME=\"$SEASON\"" >> "$ENVFILE"
-            echo "MOVIE_ALIAS=\"$ALIAS.$PARSEASON\"" >> "$ENVFILE"
-            echo "REDUNDANCY=\"$REDUNDANCY\"" >> "$ENVFILE"
-            echo "PAR2_DIR=\"$SEASON_WORK_DIR\"" >> "$ENVFILE"
+            create_config "$ALIAS.$PARSEASON" "$SEASON" "$SEASON" "$SEASON_WORK_DIR"
 
             # Create par2 files for the individual season
-            par2 create -r"$REDUNDANCY" -t8 -m4096 -b4000 -B "$SEASON" "$SEASON_WORK_DIR/$ALIAS.$PARSEASON" "$SEASON"/*
+            par2 create -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCK_COUNT}" -B "$SEASON" "$SEASON_WORK_DIR/$ALIAS.$PARSEASON" "$SEASON"/*
         else
             echo -e "${C_YELLOW}[-] Target directory already exists. Skipping: $SEASON_WORK_DIR${C_RESET}"
         fi
     done
-    echo -e "${C_MAGENTA}=========================================================================================="
+    echo -e "${C_MAGENTA}==========================================================================================${C_RESET}"
     echo; echo
 }
+##################################################################
+
+##################################################################
+# Function to process a folder of files (e.g. Band / Music folders)
+##################################################################
+process_files() {
+    local TARGET="$1"
+    local TLD="$2"
+    local ALIAS="$3"
+    local CATEGORY="$4"
+    local REDUNDANCY="$5"
+
+    SRC_DIR="$TLD/$TARGET"
+
+    if [ ! -d "$SRC_DIR" ]; then
+        echo -e "${C_RED}[-] Source directory not found: $SRC_DIR. Skipping.${C_RESET}"
+        echo; echo
+        return
+    fi
+
+    # If ALIAS is blank, automatically iterate through all immediate subdirectories (e.g., bands under 80s)
+    if [ -z "$ALIAS" ]; then
+        echo -e "${C_GREEN}==========================================================================================${C_RESET}"
+        echo -e "Scanning Parent Collection Directory: ${C_BOLD}$SRC_DIR${C_RESET}"
+        echo -e "${C_GREEN}==========================================================================================${C_RESET}"
+        
+        for SUB_DIR in "$SRC_DIR"/*/; do
+            [ -d "$SUB_DIR" ] || continue
+            local sub_name=$(basename "$SUB_DIR")
+            local sub_target="$TARGET/$sub_name"
+            process_files "$sub_target" "$TLD" "$sub_name" "$CATEGORY" "$REDUNDANCY"
+        done
+        return
+    fi
+
+    # Otherwise, process this specific artist/band folder as a single recursive PAR2 set
+    local DIR_NAME=$(basename "$TARGET")
+    local WORK_DIR="$DEST_DIR/$CATEGORY/$DIR_NAME"
+
+    echo -e "${C_GREEN}==========================================================================================${C_RESET}"
+    echo -e "Processing Folder Collection: ${C_BOLD}${C_GREEN}$ALIAS${C_RESET} (${C_YELLOW}Redundancy: ${REDUNDANCY}%${C_RESET}${C_GREEN})"
+    echo -e "${C_GREEN}------------------------------------------------------------------------------------------${C_RESET}"
+    echo -e " Source   : $SRC_DIR"
+    echo -e " Work Dir : $WORK_DIR"
+    echo -e "${C_GREEN}==========================================================================================${C_RESET}"
+
+    [ ! -d "$WORK_DIR" ] && mkdir -p "$WORK_DIR"
+
+    echo -e "${C_BOLD}"
+    du -sh "$SRC_DIR"
+    if [[ ! -d "$WORK_DIR" || -z "$(ls -A "$WORK_DIR"/*.par2 2>/dev/null)" || "$CFG_FORCE" == "true" ]]; then
+        [ ! -d "$WORK_DIR" ] && mkdir -p "$WORK_DIR"
+
+        # Create config files for future verification ease
+        ENVFILE="$WORK_DIR/config.env"
+        create_config "$ALIAS" "$SRC_DIR" "$SRC_DIR" "$WORK_DIR"
+
+        # Create par2 files recursively (-R) to cover subfolders (like albums/Flashback) inside the band folder
+        par2 create -R -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCK_COUNT}" -B "$SRC_DIR" "$WORK_DIR/$ALIAS" "$SRC_DIR"/*
+    else
+        echo -e "${C_YELLOW}[-] Target directory already exists or has PAR2 files. Skipping: $WORK_DIR${C_RESET}"
+    fi
+    echo -e "${C_GREEN}==========================================================================================${C_RESET}"
+    echo; echo
+}
+##################################################################
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-#                         MAIN                          #
+#                       MAIN                            #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-# --- EXECUTION MODES ---
+# Parse command-line options
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        -m|--media-list) 
+            MEDIA_LIST="$2"
+            shift 
+            ;;
+        -d|--dest-dir) 
+            DEST_DIR="${2%/}"
+            shift
+            ;;
+        -t|--toplevel) 
+            TOPLEVEL="$2"
+            shift 
+            ;;
+        -r|--redundancy) 
+            DEF_REDUNDANCY="$2"
+            shift 
+            ;;
+        -b|--recovery-blocks) 
+            BLOCK_COUNT="$2"
+            shift 
+            ;;
 
+        -s|--scan)
+            SCAN_MODE=true
+            ;;
+        -f|--force) 
+            CFG_FORCE=true 
+            ;;
+        -y|--yes)
+            ASSUME_YES=true
+            ;;
+        -h|--help) 
+            usage 
+            ;;
+        *)
+            echo -e "${C_RED}Unknown option: $1${C_RESET}" >&2
+            echo "Use '$0 --help' for usage information." >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+# Log file
+LOGFILE="$DEST_DIR/par2generator.log"
+
+# Verify important things exists
+if [ ! -d "$DEST_DIR" ]; then
+    echo -e "${C_RED}Destination directory '$DEST_DIR' does not exist! Exiting!${C_RESET}" >&2
+    exit 1
+fi
+
+if [[ "$SCAN_MODE" == "true" && ! -d "$TOPLEVEL" ]]; then
+    echo -e "${C_RED}Top-level directory '$TOPLEVEL' does not exist! Exiting!${C_RESET}" >&2
+    exit 1
+fi
+
+if [[ "$SCAN_MODE" == "false" && ! -f "$MEDIA_LIST" ]]; then
+    echo -e "${C_RED}Data file '$MEDIA_LIST' not found! Exiting!${C_RESET}" >&2
+    exit 1
+fi
+
+# Print a configuration summary
+summary_confirm
+
+# Wait for confirmation (unless ASSUME_YES)
+if [ "$ASSUME_YES" == "false" ]; then
+    read -p "Do you want to proceed with these settings? [y/N] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "${C_YELLOW}Aborted by user.${C_RESET}"
+        exit 0
+    fi
+fi
+echo ""
+
+# Redirect all stdout and stderr to both the terminal and the master log file
+exec > >(tee -a "$LOGFILE") 2>&1
+
+echo -e "${C_BLUE}====================================================================${C_RESET}"
+echo -e "${C_BOLD}Starting PAR2 Generation: $(date)${C_RESET}"
+echo -e "Log file: $LOGFILE"
+echo -e "${C_BLUE}====================================================================${C_RESET}"
+echo ""
+
+# Execute scan or read input file based on execution mode
 if [[ "$SCAN_MODE" == "true" ]]; then
     echo -e "${C_YELLOW}Scanning '$TOPLEVEL' for media...${C_RESET}"
 
@@ -290,7 +447,7 @@ if [[ "$SCAN_MODE" == "true" ]]; then
         alias="$(basename "$series_dir")"
 
         process_tv "$target_path" "$TOPLEVEL" "$alias" "$category" "$DEF_REDUNDANCY"
-    done < <(find "$TOPLEVEL" -type d \( -name "Season*" -o -name "Extra*" \) -exec dirname {} \; | sort -u)
+    done < <(find "$TOPLEVEL" -type d \( -iname "Season*" -o -iname "Extra*" \) -exec dirname {} \; | sort -u)
 
     # Detect Movies (video files not located inside any Season/Extra directory)
     while IFS= read -r vid_file; do
@@ -329,8 +486,41 @@ if [[ "$SCAN_MODE" == "true" ]]; then
             work_dir="$DEST_DIR/$rel_dir/$stem"
         fi
 
-        process_movie "$src_path" "$file_name" "$work_dir" "$alias" "$category" "$DEF_REDUNDANCY"
-    done < <(find "$TOPLEVEL" -type f \( -name "*.mkv" -o -name "*.mp4" -o -name "*.avi" -o -name "*.m4v" -o -name "*.ts" \) | sort)
+        #process_movie "$src_path" "$file_name" "$work_dir" "$alias" "$category" "$DEF_REDUNDANCY"
+        process_movie "$src_path" "$stem" "$work_dir" "$alias" "$category" "$DEF_REDUNDANCY"
+    done < <(find "$TOPLEVEL" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" -o -iname "*.ts" \) | sort)
+
+
+    # Detect Folder Collections (e.g. music band folders under genre directories like /data/MP3s/80s/ACDC)
+    # Scans depth 2 folders under TOPLEVEL that contain files and do NOT contain Season/Extra subfolders
+    while IFS= read -r folder_dir; do
+        [[ -z "$folder_dir" ]] && continue
+
+        # Skip if it's a TV series folder
+        if find "$folder_dir" -maxdepth 1 -type d \( -iname "Season*" -o -iname "Extra*" \) | grep -q .; then
+            continue
+        fi
+
+        # Skip if it contains movie video files directly inside it (handled by movie scan)
+        if find "$folder_dir" -maxdepth 1 -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" -o -iname "*.ts" \) | grep -q .; then
+            continue
+        fi
+
+        rel_path="${folder_dir#$TOPLEVEL/}"
+        [[ -z "$rel_path" || "$rel_path" == "$TOPLEVEL" ]] && continue
+
+        if [[ "$rel_path" == */* ]]; then
+            category="$(dirname "$rel_path")"
+        else
+            category="Collections"
+        fi
+
+        # target_path="$rel_path"
+        # alias="$(basename "$folder_dir")"
+
+        process_files "$rel_path" "$TOPLEVEL" "$(basename "$folder_dir")" "$category" "$DEF_REDUNDANCY"
+    done < <(find "$TOPLEVEL" -mindepth 2 -maxdepth 2 -type d | sort)
+
 
 else
     # Loop through each entry listed in $MEDIA_LIST
@@ -352,6 +542,16 @@ else
 
         # Sanitize alias to prevent accidental directory nesting if subfolders were included in ALIAS
         ALIAS="${ALIAS##*/}"
+
+        # If ALIAS is omitted/blank, default it using the same naming mechanism as scan mode
+        if [ -z "$ALIAS" ]; then
+            if [[ "${TYPE,,}" == "movie" ]]; then
+                local_file="${TARGET##*/}"
+                ALIAS="${local_file%.*}"
+            elif [[ "${TYPE,,}" == "tv" ]]; then
+                ALIAS="$(basename "$TARGET")"
+            fi
+        fi
 
         # Process based on media type
         case "${TYPE,,}" in
@@ -376,6 +576,9 @@ else
             tv)
                 process_tv "$TARGET" "$TLD" "$ALIAS" "$CATEGORY" "$REDUNDANCY"
                 ;;
+            files)
+                process_files "$TARGET" "$TLD" "$ALIAS" "$CATEGORY" "$REDUNDANCY"
+                ;;
             *)
                 echo -e "${C_RED}[-] Unknown media type '$TYPE' for entry '$TARGET'. Skipping.${C_RESET}"
                 ;;
@@ -383,6 +586,6 @@ else
     done < <(cat "$MEDIA_LIST")
 fi
 
-echo -e "${C_BLUE}===================================================================="
+echo -e "${C_BLUE}====================================================================${C_RESET}"
 echo -e "${C_BOLD}PAR2 Generation Completed: $(date)${C_RESET}"
-echo -e "${C_BLUE}===================================================================="
+echo -e "${C_BLUE}====================================================================${C_RESET}"
