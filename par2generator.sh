@@ -21,9 +21,6 @@
 #                                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-# Added a directory scan mode
-# Updated process_videos() to deal with subfolders correctly
-
 # TO DO:
 # - Add a mode to scan a directory tree and create par2 files for everything? Not sure how that would work since sometimes it isn't a single file. (Implemented via --scan)
 
@@ -54,7 +51,7 @@ usage() {
     echo "  -m, --media-list FILE     Path to the media list file (default: media_list.txt)"
     echo "  -b, --base-dir DIR        Base output directory for PAR2 sets (default: /scratch/Par2_Files/Videos)"
     echo "  -t, --toplevel DIR        Default top-level source directory (default: /data/Videos)"
-    echo "  -r, --r percentage        Default redundancy percentage (default: 7)"
+    echo "  -r, --redundancy PERCENT  Default redundancy percentage (default: 7)"
     echo "  -s, --scan                Automatically scan the top-level directory tree instead of using a media list"
     echo "  -f, --force               Force recreation of config and target directories (default: false)"
     echo "  -h, --help                Display this help message and exit"
@@ -106,7 +103,7 @@ if [ ! -d "$BASE_DIR" ]; then
     exit 1
 fi
 
-# Log redirection
+# Redirect all stdout and stderr to both the terminal and the master log file
 exec > >(tee -a "$LOGFILE") 2>&1
 
 echo "===================================================================="
@@ -116,34 +113,17 @@ echo "Mode: $( [[ "$SCAN_MODE" == "true" ]] && echo "Automatic Directory Scan" |
 echo "===================================================================="
 echo ""
 
-# Function to process a Movie entry
+# Unified function to process and create PAR2 for a movie
 process_movie() {
-    local TARGET="$1"
-    local TLD="$2"
-    local ALIAS="$3"
-    local CATEGORY="$4"
-    local REDUNDANCY="$5"
-
-    # Extract subfolder path and filename if a subfolder exists
-    if [[ "$TARGET" == */* ]]; then
-        SUB_DIR="${TARGET%/*}"
-        FILE_NAME="${TARGET##*/}"
-    else
-        SUB_DIR=""
-        FILE_NAME="$TARGET"
-    fi
-
-    # Include subfolder only if present
-    if [ -n "$SUB_DIR" ]; then          
-        WORK_DIR="$BASE_DIR/$CATEGORY/$SUB_DIR/$ALIAS"
-        SRC_PATH="$TLD/$CATEGORY/$SUB_DIR"
-    else
-        WORK_DIR="$BASE_DIR/$CATEGORY/$ALIAS"
-        SRC_PATH="$TLD/$CATEGORY"
-    fi
+    local SRC_PATH="$1"
+    local FILE_NAME="$2"
+    local WORK_DIR="$3"
+    local ALIAS="$4"
+    local CATEGORY="$5"
+    local REDUNDANCY="$6"
 
     echo "=========================================================================================="
-    echo "Processing Movie: $TARGET"
+    echo "Processing Movie: $ALIAS"
     echo "Redundancy: ${REDUNDANCY}%"
     echo "Source: $SRC_PATH"
     echo "Work Dir: $WORK_DIR"
@@ -271,11 +251,26 @@ if [[ "$SCAN_MODE" == "true" ]]; then
 
         rel_path="${vid_file#$TOPLEVEL/}"
         category="${rel_path%%/*}"
-        target_path="${rel_path#*/}"
+        
         filename="$(basename "$vid_file")"
-        alias="${filename%.*}"
+        stem="${filename%.*}"
+        file_dir="$(dirname "$vid_file")"
+        parent_dir="$(basename "$file_dir")"
+        rel_dir="${file_dir#$TOPLEVEL/}"
 
-        process_movie "$target_path" "$TOPLEVEL" "$alias" "$category" "$DEF_REDUNDANCY"
+        src_path="$file_dir"
+        file_name="$filename"
+        alias="$stem"
+
+        # If the parent directory is named identically to the movie file (case-insensitive),
+        # use the parent folder directly as the work directory without duplicating the name.
+        if [[ "${parent_dir,,}" == "${stem,,}" ]]; then
+            work_dir="$BASE_DIR/$rel_dir"
+        else
+            work_dir="$BASE_DIR/$rel_dir/$stem"
+        fi
+
+        process_movie_direct "$src_path" "$file_name" "$work_dir" "$alias" "$category" "$DEF_REDUNDANCY"
     done < <(find "$TOPLEVEL" -type f \( -name "*.mkv" -o -name "*.mp4" -o -name "*.avi" -o -name "*.m4v" -o -name "*.ts" \) | sort)
 
 else
@@ -304,7 +299,23 @@ else
 
         case "${TYPE,,}" in
             movie)
-                process_movie "$TARGET" "$TLD" "$ALIAS" "$CATEGORY" "$REDUNDANCY"
+                if [[ "$TARGET" == */* ]]; then
+                    SUB_DIR="${TARGET%/*}"
+                    FILE_NAME="${TARGET##*/}"
+                else
+                    SUB_DIR=""
+                    FILE_NAME="$TARGET"
+                fi
+
+                if [ -n "$SUB_DIR" ]; then          
+                    WORK_DIR="$BASE_DIR/$CATEGORY/$SUB_DIR/$ALIAS"
+                    SRC_PATH="$TLD/$CATEGORY/$SUB_DIR"
+                else
+                    WORK_DIR="$BASE_DIR/$CATEGORY/$ALIAS"
+                    SRC_PATH="$TLD/$CATEGORY"
+                fi
+
+                process_movie "$SRC_PATH" "$FILE_NAME" "$WORK_DIR" "$ALIAS" "$CATEGORY" "$REDUNDANCY"
                 ;;
             tv)
                 process_tv "$TARGET" "$TLD" "$ALIAS" "$CATEGORY" "$REDUNDANCY"
