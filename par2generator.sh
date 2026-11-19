@@ -21,8 +21,6 @@
 #                                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-# Sanitize Alias
-
 # TO DO:
 # - Add a mode to scan a directory tree and create par2 files for everything? Not sure how that would work since sometimes it isn't a single file. (Implemented via --scan)
 
