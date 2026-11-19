@@ -21,10 +21,8 @@
 #                                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-# Another attempt at handling subfolders correctly
-
 # TO DO:
-# - Add a mode to scan a directory tree and create par2 files for everything? Not sure how that would work since sometimes it isn't a single file. (Implemented via --scan)
+# - Rename BASE_DIR to PAR2_DIR (or even DEST_DIR or OUTPUT_DIR)
 
 # TO VERIFY PAR2 FILES:
 # source Path/To/config.env
@@ -101,9 +99,40 @@ done
 LOGFILE="$BASE_DIR/par2generator.log"
 
 if [ ! -d "$BASE_DIR" ]; then
-    echo "$BASE_DIR does not exist! Exiting!" >&2
+    echo "Base directory '$BASE_DIR' does not exist! Exiting!" >&2
     exit 1
 fi
+
+if [[ "$SCAN_MODE" == "true" && ! -d "$TOPLEVEL" ]]; then
+    echo "Top-level directory '$TOPLEVEL' does not exist! Exiting!" >&2
+    exit 1
+fi
+
+if [[ "$SCAN_MODE" == "false" && ! -f "$MEDIA_LIST" ]]; then
+    echo "Data file '$MEDIA_LIST' not found! Exiting!" >&2
+    exit 1
+fi
+
+# --- CONFIGURATION SUMMARY & CONFIRMATION PROMPT ---
+echo "===================================================================="
+echo " PAR2 Batch Generator Configuration Summary"
+echo "===================================================================="
+echo " Execution Mode      : $( [[ "$SCAN_MODE" == "true" ]] && echo "Automatic Directory Scan (--scan)" || echo "Media List File ($MEDIA_LIST)" )"
+echo " Base Directory      : $BASE_DIR"
+echo " Top-Level Directory : $TOPLEVEL"
+echo " Default Redundancy  : ${DEF_REDUNDANCY}%"
+echo " Config Overwrite    : $CFG_FORCE"
+[[ "$SCAN_MODE" == "false" ]] && echo " Media List File     : $MEDIA_LIST"
+echo " Log File            : $LOGFILE"
+echo "===================================================================="
+
+read -p "Do you want to proceed with these settings? [y/N] " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Aborted by user."
+    exit 0
+fi
+echo ""
 
 # Redirect all stdout and stderr to both the terminal and the master log file
 exec > >(tee -a "$LOGFILE") 2>&1
@@ -111,7 +140,7 @@ exec > >(tee -a "$LOGFILE") 2>&1
 echo "===================================================================="
 echo "Starting PAR2 Generation: $(date)"
 echo "Log file: $LOGFILE"
-echo "Mode: $( [[ "$SCAN_MODE" == "true" ]] && echo "Automatic Directory Scan" || echo "Media List File ($MEDIA_LIST)" )"
+																																																												 
 echo "===================================================================="
 echo ""
 
@@ -160,7 +189,7 @@ process_movie() {
     echo; echo
 }
 
-# Function to process a TV Series entry
+# Function to process a TV Series
 process_tv() {
     local TARGET="$1"
     local TLD="$2"
@@ -223,10 +252,10 @@ process_tv() {
 # --- EXECUTION MODES ---
 
 if [[ "$SCAN_MODE" == "true" ]]; then
-    if [ ! -d "$TOPLEVEL" ]; then
-        echo "Top-level directory '$TOPLEVEL' does not exist! Exiting!" >&2
-        exit 1
-    fi
+																 
+																																					 
+							
+			
 
     echo "Scanning '$TOPLEVEL' for media..."
 
@@ -236,8 +265,8 @@ if [[ "$SCAN_MODE" == "true" ]]; then
         
         rel_path="${series_dir#$TOPLEVEL/}"
         
-        # Check if there is an intermediate folder like 'TV Series' between category and series name
-        # e.g., Other/TV Series/The IT Crowd -> category='Other/TV Series'
+																																																		
+        # Preserve intermediate folder if present (e.g. Other/TV Series/The IT Crowd -> category='Other/TV Series')
         if [[ "$rel_path" == */*/* ]]; then
             parent_dir="$(dirname "$rel_path")"
             category="$parent_dir"
@@ -261,17 +290,17 @@ if [[ "$SCAN_MODE" == "true" ]]; then
         fi
 
         rel_path="${vid_file#$TOPLEVEL/}"
-        
-        # Determine category dynamically, preserving nested folders (like Movie Groups)
+				
+				# Determine category dynamically, preserving nested folders																																		 
         file_dir="$(dirname "$vid_file")"
         rel_dir="${file_dir#$TOPLEVEL/}"
         
         filename="$(basename "$vid_file")"
         stem="${filename%.*}"
-																				 
+										 
         parent_dir="$(basename "$file_dir")"
 
-        # Extract top-level category (e.g., Action, Comedy)
+				# Extract top-level category (e.g., Action, Comedy)																									 
         category="${rel_path%%/*}"
 
         src_path="$file_dir"
@@ -279,7 +308,7 @@ if [[ "$SCAN_MODE" == "true" ]]; then
         alias="$stem"
 
         # If parent directory matches the movie title, place work_dir one level higher
-																																														
+																							
         if [[ "${parent_dir,,}" == "${stem,,}" ]]; then
             work_dir="$BASE_DIR/$rel_dir"
         else
@@ -290,11 +319,11 @@ if [[ "$SCAN_MODE" == "true" ]]; then
     done < <(find "$TOPLEVEL" -type f \( -name "*.mkv" -o -name "*.mp4" -o -name "*.avi" -o -name "*.m4v" -o -name "*.ts" \) | sort)
 
 else
-    # Check for media list file in standard mode
-    if [[ ! -f "$MEDIA_LIST" ]]; then
-        echo "Data file '$MEDIA_LIST' not found! Exiting!" >&2
-        exit 1
-    fi
+																								
+																		 
+																															
+							
+			
 
     # Loop through each entry listed in $MEDIA_LIST
     while IFS=':' read -r TYPE TARGET TLD ALIAS CATEGORY REDUNDANCY; do
