@@ -1,6 +1,7 @@
 # Use the following format:
 # TYPE:FILENAME:TOPLEVELDIR:MOVIE_ALIAS:GENRE:REDUNDANCY
 #
+# TYPE (required): Type of media (movie,tv,files). This changes how the folder structure is handled
 # FILENAME (required): Name of the file or folder (no path and NO FILE EXTENSION)
 #   This will be globbed with a '*' to pickup multiple files (such as .srt files)
 # TOPLEVELDIR (optional): Top level path to the movies (which contains Action, Adventure, etc)
@@ -13,6 +14,6 @@
 
 #TYPE:FILENAME:TOPLEVELDIR:MOVIE_ALIAS:GENRE:REDUNDANCY
 
-Test.Video.1:/data/Videos/Test:TestVideo1:Fantasy:
-Test.Video.2::TestVideo2:Action:
-Test.Video.3::TestVideo3:Comedy:
+movie:Test.Video.1:/data/Videos/Test:TestVideo1:Fantasy:
+movie:Test.Video.2::TestVideo2:Action:
+movie:Test.Video.3::TestVideo3:Comedy:
