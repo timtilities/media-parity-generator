@@ -22,12 +22,12 @@
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
 # TO DO:
-# - Move the list of MOVIES into a separate colon-seperated file?
-#     - Sample line:  "Sleepy.Hollow.1999.REMASTERED.1080p.x265.AAC51":"/data/Videos/Fantasy":"SleepyHollow":"Fantasy":5
-#   - The execution order does not follow the movie list (it's following the order of the hash, not filename).
-#     Making it a separate file and simply looping over that would go in order.
+# - Make the default variables TOPLEVEL, DEF_REDUNDANCY & CFG_FORCE also available through CLI options
 # - Add a mode to scan a directory tree and create par2 files for everything? Not sure how that would work since sometimes it isn't a single file.
 # - Is there a way to combine the TVSeries script with this one?
+
+# File containing the movie list
+MOVIES_LIST="movie_list.txt"
 
 # Base  directory where the season folders and par2 sets will be built
 BASE_DIR="/scratch/Par2_Files/Videos"
@@ -42,18 +42,18 @@ TOPLEVEL="/data/Videos"
 # Force recreation of config.env for all sets
 CFG_FORCE=false
 
-# Array mapping [FILENAME]="TOP_LEVEL_DIRECTORY:MOVIE_ALIAS:GENRE:REDUNDANCY"
-# If there are .srt files, leave the extension off.
-declare -A MOVIES=(
-    #["FILENAME"]="$TOPLEVEL:ALIAS:GENRE:REDUNDANCY"
-    ["Test.Video.1"]="/data/Videos/Fantasy:TestVideo1:Fantasy:2"
-    ["Test.Video.2"]="$TOPLEVEL:TestVideo2:Action:2"
-    ["Test.Video.3"]="$TOPLEVEL:TestVideo3:Comedy:2"
-)
+# Default redundancy - used if not specified in MOVIES_LIST
+DEF_REDUNDANCY="2"
+
+# Check for movies list
+if [[ ! -f "$MOVIES_LIST" ]]; then
+    echo "Data file '$MOVIES_LIST' not found! Exiting!" >&2
+    exit 1
+fi
 
 if [ ! -d "$BASE_DIR" ]; then
-                echo "$BASE_DIR does not exist! Exiting!"
-                exit 1
+    echo "$BASE_DIR does not exist! Exiting!"
+    exit 1
 fi
 
 # Redirect all stdout and stderr to both the terminal and the master log file
@@ -65,9 +65,20 @@ echo "Log file: $LOGFILE"
 echo "===================================================================="
 echo ""
 
-# Loop through each movie directory
-for MOVIE in "${!MOVIES[@]}"; do
-    IFS=':' read -r TLD MOVIE_ALIAS GENRE REDUNDANCY <<< "${MOVIES[$MOVIE]}"
+# Loop through each movie listed in $MOVIES_LIST
+while IFS=':' read -r MOVIE TLD MOVIE_ALIAS GENRE REDUNDANCY; do
+    # Skip comments & empty lines
+    [[ "$MOVIE" =~ ^#.*$ ]] || [[ -z "$MOVIE" ]] && continue
+    # Strip Windows CR/LF
+    MOVIE="${MOVIE//[$'\r']/}"
+    TLD="${TLD//[$'\r']/}"
+    MOVIE_ALIAS="${MOVIE_ALIAS//[$'\r']/}"
+    GENRE="${GENRE//[$'\r']/}"
+    REDUNDANCY="${REDUNDANCY//[$'\r']/}"
+    # If TLD is blank, use $TOPLEVEL instead
+    TLD="${TLD:-$TOPLEVEL}"
+    # If REDUNDANCY is blank, use $DEF_REDUNDANCY instead
+    REDUNDANCY="${REDUNDANCY:-$DEF_REDUNDANCY}"
 
     # Extract subfolder path and filename if a subfolder exists
     if [[ "$MOVIE" == */* ]]; then
@@ -98,6 +109,7 @@ for MOVIE in "${!MOVIES[@]}"; do
         continue
     fi
 
+    # Process the movie entry
     if [[ ! -d "$WORK_DIR" || "$CFG_FORCE" == "true" ]]; then
         mkdir -p "$WORK_DIR"
 
@@ -126,7 +138,7 @@ for MOVIE in "${!MOVIES[@]}"; do
     fi
     echo "=========================================================================================="
     echo; echo
-done
+done < <(cat "$MOVIES_LIST")
 
 echo "===================================================================="
 echo "Movie Batch Generation Completed: $(date)"
