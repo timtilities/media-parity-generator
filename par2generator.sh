@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-# Added check_dir_size function
-
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                                                                                             #
 #    MEDIA-PARITY-GENERATOR - LICENSE                                                         #
