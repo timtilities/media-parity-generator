@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# Added check_dir_size function
+
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                                                                                             #
 #    MEDIA-PARITY-GENERATOR - LICENSE                                                         #
@@ -21,12 +23,21 @@
 #                                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-# TODO:
+# NOTES:
+# - "files" mode is not compatible with movie/tv modes. if there are movies in the folders they will be scanned as movies and parified individually
+#     I keep them in separate TLDs (not /data/Videos), so I have to run them separately anyway to put the par2 files somewhere other than 
+#     /mnt/Videos. Not sure if there is a way around this - movie scan would need to be able to determine if it's a file directory (HOW??)
+#     - Perhaps I could add folder markers - something like '.file' to the root of the directory to indicate it is NOT a movie/tv directory?
+#
+#
 # - Add an exclude option when scanning - either just exclude first-level dirs, or use the find -X option and syntax
 #   - The Family/Cartoon directory was treated as a movie folder and it generated par2s for each video (hundreds).
 #     I redid this manually, but is there a way to detect this and handle it? maybe the Cartoon directory needs to be
 #     fixed, not the script?
-# - Move '# Get proper block count' to a helper function
+#
+# - Add some kind of 'sync' option the will scan for NEW files
+#   - It should NOT replace/update existing par2 files - that should only be done manually
+#
 
 
 # MANUALLY CREATE PAR2 FILES
@@ -40,7 +51,7 @@
 
 # Default configuration variables:
 # File containing the media list
-MEDIA_LIST="/opt/misc/par2_scripts/media_list.txt"
+MEDIA_LIST="media_list.txt"
 # Destination directory where the par2 sets will be built
 DEST_DIR="/mnt/Videos"
 # Top level directory default (used if TLD from MEDIA_LIST is blank or in scan mode)
@@ -55,8 +66,7 @@ DEF_BLOCK_COUNT="4000"
 ASSUME_YES=false
 # Automatic directory scan mode
 SCAN_MODE=false
-# Force the scan into a specific mode (movie/tv/files). Only affects automatic directory scan.
-DETECT_MODE=""
+
 
 ######################## CHANGE NOTHING BELOW THIS LINE ########################
 
@@ -73,6 +83,10 @@ C_RED='\033[0;31m'
 # Remove trailing / (just in case)
 TOPLEVEL="${TOPLEVEL%/}"
 DEST_DIR="${DEST_DIR%/}"
+
+# initialize some vars
+DETECT_MODE=""
+ERROR=
 
 ##################################################################
 # Display usage instructions
@@ -143,8 +157,39 @@ summary_confirm() {
     [[ "$SCAN_MODE" == "false" ]] && echo -e " Media List File     : ${C_BOLD}$MEDIA_LIST${C_RESET}"
     [[ "$SCAN_MODE" == "true" ]] && [[ "$DETECT_MODE" == "" ]] && echo -e " Scan Mode           : ${C_BOLD}Automatic${C_RESET}"
     [[ "$SCAN_MODE" == "true" ]] && [[ "$DETECT_MODE" != "" ]] && echo -e " Scan Mode           : ${C_BOLD}$DETECT_MODE${C_RESET}"
-    echo -e " Log File            : ${C_BOLD}$LOGFILE${C_RESET}"
+    echo -e " Log File            : ${C_BOLD}$MAINLOGFILE${C_RESET}"
     echo -e "${C_CYAN}====================================================================${C_RESET}"
+}
+##################################################################
+
+
+##################################################################
+# Function to deal with parity generation failures
+# Required Parameters:
+# DIRECTORY:      Directory which triggered the error
+# MSG:            Message (reason) for the error
+##################################################################
+process_failure() {
+    local DIRECTORY="$1"
+    local MSG="$2"
+    echo -e "${C_RED}Warning: File count ($FILECNT) exceeds BLOCK_COUNT ($DEF_BLOCK_COUNT) for ${DIRECTORY}!${C_RESET}"
+    echo "\"$DIRECTORY\" -- FAILURE -- \"$MSG\"" >> "$FAILLOGFILE"
+}
+##################################################################
+
+##################################################################
+# Function to check the total file count in a directory
+# Required Parameters:
+# DIRECTORY:      Directory to check
+##################################################################
+check_dir_size() {
+    local DIRECTORY="$1"
+    local FILECNT=$(find "$DIRECTORY"* -type f | wc -l)
+    if [ $FILECNT -gt $DEF_BLOCK_COUNT ]; then
+        process_failure "$DIRECTORY" "File count ($FILECNT) exceeds BLOCK_COUNT ($DEF_BLOCK_COUNT)"
+    else
+        echo 0
+    fi
 }
 ##################################################################
 
@@ -160,7 +205,7 @@ process_movie() {
     local REDUNDANCY="$6"
 
     echo -e "${C_CYAN}==========================================================================================${C_RESET}"
-    echo -e "Processing Movie: ${C_BOLD}${C_GREEN}$ALIAS${C_RESET}"
+    echo -e "Processing Movie: ${C_BOLD}${C_GREEN}${ALIAS}${C_RESET}"
     echo -e "${C_CYAN}------------------------------------------------------------------------------------------${C_RESET}"
     echo -e " Redundancy : ${C_YELLOW}${REDUNDANCY}%${C_RESET}"
     echo -e " Source     : $SRC_PATH"
@@ -175,23 +220,23 @@ process_movie() {
     fi
 
     if [[ ! -d "$WORK_DIR" || "$CFG_FORCE" == "true" ]]; then
-        mkdir -p "$WORK_DIR"
         echo -e "${C_BOLD}"
         du -sh "$SRC_PATH/$FILE_NAME"* 2>/dev/null || true
+        local dirstat=$(check_dir_size "$SRC_DIR")
+        if [ "$dirstat" == "0" ]; then
+            # Create par2 working directory
+            [ ! -d "$WORK_DIR" ] && mkdir -p "$WORK_DIR"
+            # Create config files for future verification ease
+            ENVFILE="$WORK_DIR/config.env"
+            create_config "$ALIAS" "$SRC_PATH" "$FILE_NAME" "$WORK_DIR"
 
-        # The total recovery blocks must be > than the total number of files, and > 2000
-        local FILECNT=$(find "$SRC_PATH/$FILE_NAME"* -type f | wc -l)
-        local BLOCKCNT=$(( FILECNT < DEF_BLOCK_COUNT ? DEF_BLOCK_COUNT : FILECNT ))
-        if (( BLOCKCNT > 32768 )); then
-            echo -e "${C_YELLOW}Warning: File count ($FILECNT) exceeds PAR2 limit of 32,768. Clamping block count.${C_RESET}"
-            BLOCKCNT=32768
-        fi
-
-        # Create config files for future verification ease
-        ENVFILE="$WORK_DIR/config.env"
-        create_config "$ALIAS" "$SRC_PATH" "$FILE_NAME" "$WORK_DIR"
-
-        par2 create -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCKCNT}" -B "$SRC_PATH" "$WORK_DIR/$ALIAS" "$SRC_PATH/$FILE_NAME"*
+            par2 create -r"$REDUNDANCY" -t8 -m4096 -b"${DEF_BLOCK_COUNT}" -B "$SRC_PATH" "$WORK_DIR/$ALIAS" "$SRC_PATH/$FILE_NAME"*
+            if [ "$?" != "0" ]; then
+                process_failure "$SRC_PATH/$FILE_NAME" "Par2 creation failure. Check main log."
+            fi
+        else
+            echo "$dirstat"
+        fi           
     else
         echo -e "${C_YELLOW}[-] Target directory already exists. Skipping: $WORK_DIR${C_RESET}"
     fi
@@ -242,22 +287,22 @@ process_tv() {
         echo -e "${C_BOLD}"
         du -sh "$SEASON"
         if [[ ! -d "$SEASON_WORK_DIR" || "$CFG_FORCE" == "true" ]]; then             
-            [ ! -d "$SEASON_WORK_DIR" ] && mkdir -p "$SEASON_WORK_DIR"
+            local dirstat=$(check_dir_size "$SEASON")
+            if [ "$dirstat" == "0" ]; then
+                # Create par2 working directory
+                [ ! -d "$SEASON_WORK_DIR" ] && mkdir -p "$SEASON_WORK_DIR"
+                # Create config files for future verification ease
+                ENVFILE="$SEASON_WORK_DIR/config.env"
+                create_config "$ALIAS.$PARSEASON" "$SEASON" "$SEASON" "$SEASON_WORK_DIR"
 
-            # The total recovery blocks must be > than the total number of files, and > 2000
-            local FILECNT=$(find "$SEASON"/* -type f | wc -l)
-            local BLOCKCNT=$(( FILECNT < DEF_BLOCK_COUNT ? DEF_BLOCK_COUNT : FILECNT ))
-            if (( BLOCKCNT > 32768 )); then
-                echo -e "${C_YELLOW}Warning: File count ($FILECNT) exceeds PAR2 limit of 32,768. Clamping block count.${C_RESET}"
-                BLOCKCNT=32768
+                # Create par2 files for the individual season
+                par2 create -r"$REDUNDANCY" -t8 -m4096 -b"${DEF_BLOCK_COUNT}" -B "$SEASON" "$SEASON_WORK_DIR/$ALIAS.$PARSEASON" "$SEASON"/*
+                if [ "$?" != "0" ]; then
+                    process_failure "$SEASON" "Par2 creation failure. Check main log."
+                fi
+            else
+                echo "$dirstat"
             fi
-
-            # Create config files for future verification ease
-            ENVFILE="$SEASON_WORK_DIR/config.env"
-            create_config "$ALIAS.$PARSEASON" "$SEASON" "$SEASON" "$SEASON_WORK_DIR"
-
-            # Create par2 files for the individual season
-            par2 create -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCKCNT}" -B "$SEASON" "$SEASON_WORK_DIR/$ALIAS.$PARSEASON" "$SEASON"/*
         else
             echo -e "${C_YELLOW}[-] Target directory already exists. Skipping: $SEASON_WORK_DIR${C_RESET}"
         fi
@@ -311,27 +356,27 @@ process_files() {
     echo -e " Work Dir : $WORK_DIR"
     echo -e "${C_GREEN}==========================================================================================${C_RESET}"
 
-    [ ! -d "$WORK_DIR" ] && mkdir -p "$WORK_DIR"
+    #[ ! -d "$WORK_DIR" ] && mkdir -p "$WORK_DIR"
 
     echo -e "${C_BOLD}"
     du -sh "$SRC_DIR"
     if [[ ! -d "$WORK_DIR" || -z "$(ls -A "$WORK_DIR"/*.par2 2>/dev/null)" || "$CFG_FORCE" == "true" ]]; then
-        [ ! -d "$WORK_DIR" ] && mkdir -p "$WORK_DIR"
+        local dirstat=$(check_dir_size "$SRC_DIR")
+        if [ "$dirstat" == "0" ]; then
+            # Create par2 working directory
+            [ ! -d "$WORK_DIR" ] && mkdir -p "$WORK_DIR"
+            # Create config files for future verification ease
+            ENVFILE="$WORK_DIR/config.env"
+            create_config "$ALIAS" "$SRC_DIR" "$SRC_DIR" "$WORK_DIR"
 
-        # The total recovery blocks must be > than the total number of files, and > 2000
-        local FILECNT=$(find "$SRC_DIR"/* -type f | wc -l)
-        local BLOCKCNT=$(( FILECNT < DEF_BLOCK_COUNT ? DEF_BLOCK_COUNT : FILECNT ))
-        if (( BLOCKCNT > 32768 )); then
-            echo -e "${C_YELLOW}Warning: File count ($FILECNT) exceeds PAR2 limit of 32,768. Clamping block count.${C_RESET}"
-            BLOCKCNT=32768
-        fi
-
-        # Create config files for future verification ease
-        ENVFILE="$WORK_DIR/config.env"
-        create_config "$ALIAS" "$SRC_DIR" "$SRC_DIR" "$WORK_DIR"
-
-        # Create par2 files recursively (-R) to cover subfolders (like albums/Flashback) inside the band folder
-        par2 create -R -r"$REDUNDANCY" -t8 -m4096 -b"${BLOCKCNT}" -B "$SRC_DIR" "$WORK_DIR/$ALIAS" "$SRC_DIR"/*
+            # Create par2 files recursively (-R) to cover subfolders (like albums/Flashback) inside the band folder
+            par2 create -R -r"$REDUNDANCY" -t8 -m4096 -b"${DEF_BLOCK_COUNT}" -B "$SRC_DIR" "$WORK_DIR/$ALIAS" "$SRC_DIR"/*
+            if [ "$?" != "0" ]; then
+                process_failure "$SRC_DIR" "Par2 creation failure. Check main log."
+            fi
+        else
+            echo "$dirstat"
+        fi        
     else
         echo -e "${C_YELLOW}[-] Target directory already exists or has PAR2 files. Skipping: $WORK_DIR${C_RESET}"
     fi
@@ -400,9 +445,6 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-# Log file
-LOGFILE="$DEST_DIR/par2generator.log"
-
 # Verify important things exists
 if [ ! -d "$DEST_DIR" ]; then
     echo -e "${C_RED}Destination directory '$DEST_DIR' does not exist! Exiting!${C_RESET}" >&2
@@ -422,6 +464,11 @@ fi
 # Verify block count is at least 2000
 DEF_BLOCK_COUNT=$(( DEF_BLOCK_COUNT < 2000 ? 2000 : DEF_BLOCK_COUNT ))
 
+# Log files
+MAINLOGFILE="$DEST_DIR/par2generator.log"
+FAILLOGFILE="$DEST_DIR/par2gen-failures.log"
+
+
 # Print a configuration summary
 summary_confirm
 
@@ -437,11 +484,11 @@ fi
 echo ""
 
 # Redirect all stdout and stderr to both the terminal and the master log file
-exec > >(tee -a "$LOGFILE") 2>&1
+exec > >(tee -a "$MAINLOGFILE") 2>&1
 
 echo -e "${C_BLUE}====================================================================${C_RESET}"
 echo -e "${C_BOLD}Starting PAR2 Generation: $(date)${C_RESET}"
-echo -e "Log file: $LOGFILE"
+echo -e "Log file: $MAINLOGFILE"
 echo -e "${C_BLUE}====================================================================${C_RESET}"
 echo ""
 
@@ -524,7 +571,7 @@ if [[ "$SCAN_MODE" == "true" ]]; then
                 if find "$folder_dir" -maxdepth 1 -type d \( -iname "Season*" -o -iname "Extra*" \) | grep -q .; then
                     continue
                 fi
-                # Skip if it contains movie files directly inside it (handled by movie scan)
+                # Skip if it contains movie files (handled by movie scan)
                 if find "$folder_dir" -maxdepth 1 -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" -o -iname "*.ts" \) | grep -q .; then
                     continue
                 fi
@@ -536,7 +583,8 @@ if [[ "$SCAN_MODE" == "true" ]]; then
             if [[ "$rel_path" == */* ]]; then
                 category="$(dirname "$rel_path")"
             else
-                category="Collections"
+                #category="Collections"
+                category=""
             fi
 
             process_files "$rel_path" "$TOPLEVEL" "$(basename "$folder_dir")" "$category" "$DEF_REDUNDANCY"
@@ -561,7 +609,7 @@ else
         TLD="${TLD:-$TOPLEVEL}"
         REDUNDANCY="${REDUNDANCY:-$DEF_REDUNDANCY}"
 
-        # Sanitize alias to prevent accidental directory nesting if subfolders were included in ALIAS
+        # Sanitize ALIAS to prevent accidental directory nesting if subfolders were included in ALIAS
         ALIAS="${ALIAS##*/}"
 
         # If ALIAS is omitted/blank, default it using the same naming mechanism as scan mode
